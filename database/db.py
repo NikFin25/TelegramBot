@@ -36,7 +36,7 @@ def get_db_session():
     return Session()
 
 def get_or_create_group(session, group_name: str):
-    """Ищет или создаёт новую группу"""
+    group_name = group_name.upper()  # Приводим к ВЕРХНЕМУ регистру
     group = session.query(Group).filter_by(name=group_name).first()
     if not group:
         group = Group(name=group_name)
@@ -45,27 +45,21 @@ def get_or_create_group(session, group_name: str):
     return group
 
 def register_user(telegram_id: int, full_name: str, group_name: str):
-    """Создание нового пользователя с привязкой к группе"""
     session = get_db_session()
+    group_name = group_name.upper()  # Снова приводим к верхнему регистру
     try:
         group = get_or_create_group(session, group_name)
-
-        # Проверка: если пользователь уже зарегистрирован — не создаём заново
-        existing = session.query(User).filter_by(telegram_id=telegram_id).first()
-        if existing:
-            return False
-
         user = User(
             telegram_id=telegram_id,
             full_name=full_name,
-            group=group  # связываем напрямую объект Group
+            group_id=group.id
         )
         session.add(user)
         session.commit()
         return True
     except Exception as e:
         session.rollback()
-        print(f"Ошибка при регистрации: {e}")
+        print(f"Ошибка регистрации: {e}")
         return False
     finally:
         session.close()
