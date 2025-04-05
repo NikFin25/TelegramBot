@@ -1,6 +1,7 @@
 # db.py
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from datetime import datetime
 
 # Базовый класс для моделей SQLAlchemy
 Base = declarative_base()
@@ -12,6 +13,7 @@ class Group(Base):
     name = Column(String(50), unique=True)  # Название группы, например: "21-СПО-ИСиП-02"
 
     users = relationship("User", back_populates="group")  # Связь: группа → список пользователей
+    schedule = relationship("Schedule", back_populates="group") # Связь: группа → расписание
 
 # Модель пользователя
 class User(Base):
@@ -22,6 +24,20 @@ class User(Base):
     group_id = Column(Integer, ForeignKey('groups.id'))  # Внешний ключ на группу
 
     group = relationship("Group", back_populates="users")  # Связь: пользователь → группа
+
+# Модель расписания
+class Schedule(Base):
+    __tablename__ = 'schedule'
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, ForeignKey('groups.id'))  # Внешний ключ на группу
+    subject = Column(String(100))  # Название предмета
+    teacher = Column(String(100))  # Преподаватель
+    day_of_week = Column(String(20))  # День недели
+    time = Column(String(20))  # Время пары (например, "08:00-09:30")
+    room = Column(String(50))  # Аудитория
+    week_number = Column(Integer)
+
+    group = relationship("Group", back_populates="schedule")
 
 # Подключение к SQLite-базе
 engine = create_engine('sqlite:///database/bot_database.db')
@@ -34,6 +50,83 @@ Session = sessionmaker(bind=engine)
 
 def get_db_session():
     return Session()
+
+def get_today_schedule(group_name: str):
+    session = Session()
+    today = datetime.today().strftime('%A').upper()  # Получаем день недели
+    current_week = get_current_week_number()
+    
+    today_schedule = session.query(Schedule).join(Group).filter(
+        Group.name == group_name,
+        Schedule.day_of_week == today,
+        Schedule.week_number == current_week
+    ).all()
+
+    if not today_schedule:
+        session.close()
+        return None
+
+    # Формируем структуру, которую ожидает student.py
+    result = {
+        today: [{
+            'time': item.time,
+            'subject': item.subject,
+            'auditorium': item.room,
+            'teacher': item.teacher,
+            'week_number': item.week_number
+        } for item in today_schedule]
+    }
+
+    session.close()
+    return result if today_schedule else "❌ На сегодня нет занятий."
+
+def get_two_weeks_schedule(group_name: str):
+    session = Session()
+    # Порядок дней недели для сортировки
+    day_order = {
+        'MONDAY': 1,
+        'TUESDAY': 2,
+        'WEDNESDAY': 3,
+        'THURSDAY': 4,
+        'FRIDAY': 5,
+        'SATURDAY': 6,
+        'SUNDAY': 7
+    }
+    
+    schedule = session.query(Schedule).join(Group).filter(
+        Group.name == group_name
+    ).all()
+
+    if not schedule:
+        session.close()
+        return None
+
+    # Создаем структуру: {неделя: {день: [пары]}}
+    result = {}
+    for item in schedule:
+        week_key = f"Неделя {item.week_number}"
+        if week_key not in result:
+            result[week_key] = {}
+        
+        if item.day_of_week not in result[week_key]:
+            result[week_key][item.day_of_week] = []
+        
+        result[week_key][item.day_of_week].append({
+            'time': item.time,
+            'subject': item.subject,
+            'auditorium': item.room,
+            'teacher': item.teacher,
+            'day_order': day_order.get(item.day_of_week, 8)  # Добавляем порядковый номер дня
+        })
+    
+    session.close()
+    return result
+
+def get_current_week_number():
+    # Пример реализации - можно заменить на свою логику определения недели
+    # Например, можно считать, что первая неделя - нечётная, вторая - чётная
+    current_week = datetime.today().isocalendar()[1]  # Номер недели в году
+    return 1 if current_week % 2 else 2
 
 def get_or_create_group(session, group_name: str):
     group_name = group_name.upper()  # Приводим к ВЕРХНЕМУ регистру
