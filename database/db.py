@@ -35,7 +35,7 @@ class Schedule(Base):
     day_of_week = Column(String(20))  # День недели
     time = Column(String(20))  # Время пары (например, "08:00-09:30")
     room = Column(String(50))  # Аудитория
-    week_number = Column(Integer)
+    week_number = Column(Integer) 
 
     group = relationship("Group", back_populates="schedule")
 

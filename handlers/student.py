@@ -46,10 +46,18 @@ async def register_user_handler(message: Message):
 # Главное меню для студента
 async def show_main_menu(message: Message):
     builder = InlineKeyboardBuilder()
+    
+
     builder.button(text="📅 Сегодня", callback_data="today_schedule")
     builder.button(text="📅 Расписание на 2 недели", callback_data="two_weeks_schedule")
+                                    # Заявка в деканат
     builder.button(text="🗑 Удалить аккаунт", callback_data="delete_account")
+
+    # Расположение кнопок 
+    builder.adjust(1)
+
     await message.answer("📋 Главное меню", reply_markup=builder.as_markup())
+
 
 # Обработка кнопки "Сегодня"
 @router.callback_query(F.data == "today_schedule")
@@ -64,6 +72,7 @@ async def today_schedule(callback: CallbackQuery):
             await callback.message.edit_text(schedule)  # Функция get_today_schedule уже возвращает форматированный текст
         else:
             await callback.message.edit_text("❌ На сегодня нет занятий.")
+    await show_main_menu(callback.message)
     session.close()
 
 # Обработка кнопки "Расписание на 2 недели"
@@ -85,6 +94,7 @@ async def two_weeks_schedule(callback: CallbackQuery):
                 await callback.message.edit_text(f"📅 <b>Расписание на 2 недели:</b>\n{formatted}")
         else:
             await callback.message.edit_text("❌ Расписание на две недели не найдено.")
+    await show_main_menu(callback.message)
     session.close()
 
 # Функция для формирования расписания в текстовом формате
