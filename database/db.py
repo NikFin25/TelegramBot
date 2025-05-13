@@ -1,5 +1,5 @@
 # db.py
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 
@@ -24,6 +24,7 @@ class User(Base):
     group_id = Column(Integer, ForeignKey('groups.id'))  # Внешний ключ на группу
 
     group = relationship("Group", back_populates="users")  # Связь: пользователь → группа
+    applications = relationship("Application", back_populates="user")
 
 # Модель расписания
 class Schedule(Base):
@@ -38,6 +39,20 @@ class Schedule(Base):
     week_number = Column(Integer) 
 
     group = relationship("Group", back_populates="schedule")
+
+# Модель заявки в декан
+class Application(Base):
+    __tablename__ = "applications"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    content = Column(Text, nullable=False)
+    status = Column(String, default="Новая")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="applications")
+
+    User.applications = relationship("Application", back_populates="user")
 
 # Подключение к SQLite-базе
 engine = create_engine('sqlite:///database/bot_database.db')

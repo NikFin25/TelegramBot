@@ -16,4 +16,4 @@ async def show_dean_menu(message: Message):
         builder.button(text="📥 Заявки студентов", callback_data="view_requests")
         builder.button(text="📣 Добавить мероприятие", callback_data="add_event")
         builder.button(text="📅 Расписание", callback_data="dean_schedule")
-        await message.answer("📋 Главное меню (Деканат)", reply_markup=builder.as_markup())
+        
