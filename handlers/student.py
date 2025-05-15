@@ -7,6 +7,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application
 from config import DEAN_IDS
 
+# Для каждого сотрудника деканата храним список message_id,
+# чтобы потом подчистить старые сообщения со списком заявок.
+DEAN_SENT_MSGS: dict[int, list[int]] = {}
 
 router = Router()
 # Состояния подачи заявки. subject — для темы заявки; description — для описания.
@@ -144,37 +147,47 @@ def get_status_buttons(app_id: int):
 # Просмотр заявки студента деканом
 @router.callback_query(F.data == "view_requests")
 async def view_requests(callback: CallbackQuery):
+    chat_id = callback.message.chat.id
+    dean_id = callback.from_user.id
+
+    # 1) Удаляем старые сообщения, если они были
+    old_ids = DEAN_SENT_MSGS.get(dean_id, [])
+    for mid in old_ids:
+        try:
+            await callback.bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass  # сообщение уже удалено или устарело
+    DEAN_SENT_MSGS[dean_id] = []  # очищаем список
+
+    # 2) Показываем актуальные заявки
     session = get_db_session()
+    apps = session.query(Application).all()
 
-    # Получаем все заявки
-    applications = session.query(Application).all()
-
-    if not applications:
+    if not apps:
+        # Используем edit_text, чтобы «переписать» меню-сообщение
         await callback.message.edit_text("❌ Нет заявок.")
-    else:
-        response = "📝 Заявки студентов:\n\n"
-        for app in applications:
-            user = app.user  # Получаем пользователя из заявки
-            await callback.message.answer(
-                text=(
-                    f"👤 <b>{user.full_name}</b> — <a href='tg://user?id={user.telegram_id}'>[написать]</a>\n"
-                    f"📄 Заявка: {app.content}\n"
-                    f"📅 Дата: {app.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"📊 Статус: {app.status}"
-                ),
-                reply_markup=get_status_buttons(app.id)
-            )
+        await show_dean_menu(callback.message)
+        session.close()
+        return
 
-        # Если заявок слишком много, можем разбить ответ на несколько частей
-        if len(response) > 4000:
-            parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
-            for part in parts:
-                await callback.message.answer(part)
-        else:
-            await callback.message.edit_text(response)
-    
+    for app in apps:
+        user = app.user
+        msg = await callback.message.answer(
+            text=(
+                f"👤 <b>{user.full_name}</b> — "
+                f"<a href='tg://user?id={user.telegram_id}'>[написать]</a>\n"
+                f"📄 Заявка: {app.content}\n"
+                f"📅 Дата: {app.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"📊 Статус: {app.status}"
+            ),
+            reply_markup=get_status_buttons(app.id)
+        )
+        DEAN_SENT_MSGS[dean_id].append(msg.message_id)  # запоминаем id
+
+    # 3) Показываем меню снова (в конце списка)
     await show_dean_menu(callback.message)
     session.close()
+
 
 @router.callback_query(F.data.startswith("status_"))
 async def change_status(callback: CallbackQuery):
