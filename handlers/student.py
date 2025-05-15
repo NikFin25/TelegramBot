@@ -82,6 +82,14 @@ async def start_application(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("📝 Введите <b>тему</b> вашей заявки:")
     await state.set_state(ApplicationForm.subject)
 
+# Обработка ввода темы заявки
+@router.message(ApplicationForm.subject)
+async def receive_subject(message: Message, state: FSMContext):
+    await state.update_data(subject=message.text)
+    await message.answer("✏ Теперь введите <b>описание</b> вашей заявки или напишите «-», если без описания:")
+    await state.set_state(ApplicationForm.description)
+
+
 @router.message(ApplicationForm.description)
 async def receive_description(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -92,7 +100,7 @@ async def receive_description(message: Message, state: FSMContext):
     user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
 
     if user:
-        from database.models import Application
+        from database.db import Application
         full_name = user.full_name
         group = user.group.name if user.group else "Группа не указана"
 
@@ -117,7 +125,7 @@ async def receive_description(message: Message, state: FSMContext):
     await state.clear()
     session.close()
 
-# Просмотр заявки студента деканом2м2
+# Просмотр заявки студента деканом
 @router.callback_query(F.data == "view_requests")
 async def view_requests(callback: CallbackQuery):
     session = get_db_session()
@@ -244,7 +252,7 @@ def format_schedule(schedule, two_weeks=False):
                     f"🕒 {class_info['time']} - {class_info['subject']}\n"
                     f"   🏫 {class_info['auditorium']} | 👨‍🏫 {class_info['teacher']}\n"
                 )
-    
+
     return formatted_schedule
 # Обработка кнопки "Удалить аккаунт"
 @router.callback_query(F.data == "delete_account")
