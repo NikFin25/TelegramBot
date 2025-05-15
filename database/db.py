@@ -54,6 +54,31 @@ class Application(Base):
 
     User.applications = relationship("Application", back_populates="user")
 
+# Модель мероприятия
+class Event(Base):
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    requirements = Column(Text, nullable=True)
+    is_active = Column(Integer, default=1)  # 1 — активно, 0 — удалено/завершено
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    participants = relationship("EventParticipant", back_populates="event")
+
+# Модель участника мероприятия
+class EventParticipant(Base):
+    __tablename__ = "event_participants"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    registered_at = Column(DateTime, default=datetime.utcnow)
+
+    event = relationship("Event", back_populates="participants")
+    user = relationship("User")  # связь с таблицей users
+
 # Подключение к SQLite-базе
 engine = create_engine('sqlite:///database/bot_database.db')
 
@@ -171,3 +196,42 @@ def register_user(telegram_id: int, full_name: str, group_name: str):
         return False
     finally:
         session.close()
+
+#Мероприятия
+def create_event(title: str, description: str, requirements: str):
+    session = get_db_session()
+    try:
+        new_event = Event(
+            title=title,
+            description=description,
+            requirements=requirements
+        )
+        session.add(new_event)
+        session.commit()
+        return new_event
+    except Exception as e:
+        print("Ошибка при создании мероприятия:", e)
+        session.rollback()
+        return None
+    finally:
+        session.close()
+
+def register_for_event(user_id: int, event_id: int):
+    session = get_db_session()
+    try:
+        # Проверка: не записан ли уже
+        existing = session.query(EventParticipant).filter_by(user_id=user_id, event_id=event_id).first()
+        if existing:
+            return False
+
+        new_participant = EventParticipant(user_id=user_id, event_id=event_id)
+        session.add(new_participant)
+        session.commit()
+        return True
+    except Exception as e:
+        print("Ошибка при записи на мероприятие:", e)
+        session.rollback()
+        return False
+    finally:
+        session.close()
+

@@ -17,6 +17,12 @@ class ApplicationForm(StatesGroup):
     subject = State()
     description = State()
 
+# Сценарий добавления мероприятия
+class EventCreation(StatesGroup):
+    title = State()
+    description = State()
+    requirements = State()
+
 # Команда /start — регистрация или приветствие
 @router.message(Command("start"))
 async def start_handler(message: Message):
@@ -62,6 +68,8 @@ async def show_dean_menu(message: Message):
     builder = InlineKeyboardBuilder()
     builder.button(text="📥 Заявки студентов", callback_data="view_requests")
     builder.button(text="📣 Добавить мероприятие", callback_data="add_event")
+    builder.button(text="🎉 Мероприятия", callback_data="admin_events")
+
     builder.adjust(1)
     await message.answer("📋 Главное меню (Деканат)", reply_markup=builder.as_markup())
 
@@ -72,6 +80,7 @@ async def show_main_menu(message: Message):
 
     builder.button(text="📅 Сегодня", callback_data="today_schedule")
     builder.button(text="📅 Расписание на 2 недели", callback_data="two_weeks_schedule")
+    builder.button(text="🎉 Мероприятия", callback_data="view_events")
     builder.button(text="✉ Заявка в деканат", callback_data="dean_application")
     builder.button(text="📥 Мои заявки", callback_data="my_requests")
     builder.button(text="🗑 Удалить аккаунт", callback_data="delete_account")
@@ -93,7 +102,6 @@ async def receive_subject(message: Message, state: FSMContext):
     await state.update_data(subject=message.text)
     await message.answer("✏ Теперь введите <b>описание</b> вашей заявки или напишите «-», если без описания:")
     await state.set_state(ApplicationForm.description)
-
 
 @router.message(ApplicationForm.description)
 async def receive_description(message: Message, state: FSMContext):
@@ -188,7 +196,6 @@ async def view_requests(callback: CallbackQuery):
     await show_dean_menu(callback.message)
     session.close()
 
-
 @router.callback_query(F.data.startswith("status_"))
 async def change_status(callback: CallbackQuery):
     session = get_db_session()
@@ -234,6 +241,189 @@ async def change_status(callback: CallbackQuery):
         await callback.answer("❌ Ошибка изменения статуса")
     finally:
         session.close()
+
+#Список мероприятий для деканата
+@router.callback_query(F.data == "admin_events")
+async def admin_events(callback: CallbackQuery):
+    session = get_db_session()
+    events = session.query(Event).order_by(Event.created_at.desc()).all()
+
+    if not events:
+        await callback.message.edit_text("❌ Мероприятий нет.")
+        await show_dean_menu(callback.message)
+        session.close()
+        return
+
+    await callback.message.delete()
+
+    for event in events:
+        status = "🟢 Активно" if event.is_active else "⚪ Завершено"
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📋 Участники", callback_data=f"event_participants_{event.id}")
+        if event.is_active:
+            builder.button(text="🗑 Удалить", callback_data=f"delete_event_{event.id}")
+
+        await callback.message.answer(
+            text=(
+                f"🎉 <b>{event.title}</b>\n"
+                f"📝 <b>Описание:</b> {event.description}\n"
+                f"📎 <b>Требования:</b> {event.requirements}\n"
+                f"📅 <b>Создано:</b> {event.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"{status}"
+            ),
+            reply_markup=builder.as_markup()
+        )
+
+    await show_dean_menu(callback.message)
+    session.close()
+
+
+#Удаление мероприятий деканатом
+@router.callback_query(F.data.startswith("delete_event_"))
+async def delete_event(callback: CallbackQuery):
+    event_id = int(callback.data.split("_")[-1])
+    session = get_db_session()
+
+    event = session.query(Event).filter_by(id=event_id).first()
+    if not event:
+        await callback.answer("❌ Мероприятие не найдено.")
+    else:
+        event.is_active = 0
+        session.commit()
+        await callback.answer("✅ Мероприятие завершено (удалено).")
+        await callback.message.edit_reply_markup(reply_markup=None)
+
+    session.close()
+
+#Список участников мероприятия 
+@router.callback_query(F.data.startswith("event_participants_"))
+async def show_event_participants(callback: CallbackQuery):
+    event_id = int(callback.data.split("_")[-1])
+    session = get_db_session()
+
+    event = session.query(Event).filter_by(id=event_id).first()
+    participants = session.query(EventParticipant).filter_by(event_id=event_id).all()
+
+    if not participants:
+        await callback.answer("❌ Пока никто не записался.")
+        session.close()
+        return
+
+    await callback.message.answer(f"👥 Участники мероприятия: <b>{event.title}</b>")
+
+    for p in participants:
+        user = p.user
+        await callback.message.answer(
+            f"👤 <b>{user.full_name}</b>\n"
+            f"🏫 Группа: {user.group.name if user.group else '—'}\n"
+            f"📅 Записан: {p.registered_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"<a href='tg://user?id={user.telegram_id}'>[написать]</a>"
+        )
+
+    session.close()
+
+
+@router.callback_query(F.data == "add_event")
+async def start_event_creation(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("📌 Введите <b>тему мероприятия</b>:")
+    await state.set_state(EventCreation.title)
+
+@router.message(EventCreation.title)
+async def get_event_title(message: Message, state: FSMContext):
+    await state.update_data(title=message.text)
+    await message.answer("✏ Введите <b>описание мероприятия</b>:")
+    await state.set_state(EventCreation.description)
+
+@router.message(EventCreation.description)
+async def get_event_description(message: Message, state: FSMContext):
+    await state.update_data(description=message.text)
+    await message.answer("📎 Введите <b>требования</b> или '-' если их нет:")
+    await state.set_state(EventCreation.requirements)
+
+from database.db import create_event 
+
+@router.message(EventCreation.requirements)
+async def get_event_requirements(message: Message, state: FSMContext):
+    data = await state.get_data()
+    title = data.get("title")
+    description = data.get("description")
+    requirements = message.text if message.text.strip() != "-" else "—"
+
+    result = create_event(title, description, requirements)
+
+    if result:
+        await message.answer("✅ Мероприятие успешно создано и доступно студентам.")
+    else:
+        await message.answer("❌ Ошибка при создании мероприятия.")
+
+    await state.clear()
+    await show_dean_menu(message)
+
+#Просмотр мероприятий студентом
+from database.db import get_db_session, Event, EventParticipant, register_for_event
+
+@router.callback_query(F.data == "view_events")
+async def view_events(callback: CallbackQuery):
+    session = get_db_session()
+    events = session.query(Event).filter_by(is_active=1).all()
+    user = session.query(User).filter_by(telegram_id=callback.from_user.id).first()
+
+    if not events:
+        await callback.message.edit_text("❌ Сейчас нет активных мероприятий.")
+        session.close()
+        return
+
+    await callback.message.delete()  # очищаем меню
+
+    for event in events:
+        # Проверка: записан ли пользователь
+        already_registered = session.query(EventParticipant).filter_by(
+            user_id=user.id, event_id=event.id
+        ).first()
+
+        button_text = "✅ Вы уже записаны" if already_registered else "📥 Записаться"
+        button_state = "disabled" if already_registered else f"register_event_{event.id}"
+
+        builder = InlineKeyboardBuilder()
+        if not already_registered:
+            builder.button(text=button_text, callback_data=button_state)
+
+        await callback.message.answer(
+            text=(
+                f"🎉 <b>{event.title}</b>\n"
+                f"📝 <b>Описание:</b> {event.description}\n"
+                f"📎 <b>Требования:</b> {event.requirements}"
+            ),
+            reply_markup=builder.as_markup() if not already_registered else None
+        )
+
+    await show_main_menu(callback.message)
+    session.close()
+
+#Записаться на мероприятие студенту
+@router.callback_query(F.data.startswith("register_event_"))
+async def register_event(callback: CallbackQuery):
+    event_id = int(callback.data.split("_")[-1])
+    session = get_db_session()
+    user = session.query(User).filter_by(telegram_id=callback.from_user.id).first()
+
+    # Уже записан?
+    already = session.query(EventParticipant).filter_by(user_id=user.id, event_id=event_id).first()
+    if already:
+        await callback.answer("Вы уже записаны на это мероприятие.")
+        session.close()
+        return
+
+    # Пытаемся зарегистрировать
+    success = register_for_event(user.id, event_id)
+    if success:
+        await callback.answer("✅ Вы успешно записались!")
+        await callback.message.edit_reply_markup(reply_markup=None)
+    else:
+        await callback.answer("❌ Не удалось записаться.")
+
+    session.close()
 
 
 # Обработка кнопки "Сегодня"
