@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application
 from config import DEAN_IDS
 
+
 router = Router()
 # Состояния подачи заявки. subject — для темы заявки; description — для описания.
 class ApplicationForm(StatesGroup):
@@ -69,6 +70,7 @@ async def show_main_menu(message: Message):
     builder.button(text="📅 Сегодня", callback_data="today_schedule")
     builder.button(text="📅 Расписание на 2 недели", callback_data="two_weeks_schedule")
     builder.button(text="✉ Заявка в деканат", callback_data="dean_application")
+    builder.button(text="📥 Мои заявки", callback_data="my_requests")
     builder.button(text="🗑 Удалить аккаунт", callback_data="delete_account")
 
     # Расположение кнопок 
@@ -125,6 +127,20 @@ async def receive_description(message: Message, state: FSMContext):
     await state.clear()
     session.close()
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+def get_status_buttons(app_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Принята", callback_data=f"status_accept_{app_id}"),
+            InlineKeyboardButton(text="🚧 В процессе", callback_data=f"status_process_{app_id}")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отклонена", callback_data=f"status_reject_{app_id}"),
+            InlineKeyboardButton(text="✅ Выполнена", callback_data=f"status_done_{app_id}")
+        ]
+    ])
+
 # Просмотр заявки студента деканом
 @router.callback_query(F.data == "view_requests")
 async def view_requests(callback: CallbackQuery):
@@ -139,13 +155,16 @@ async def view_requests(callback: CallbackQuery):
         response = "📝 Заявки студентов:\n\n"
         for app in applications:
             user = app.user  # Получаем пользователя из заявки
-            response += (
-                f"👤 <b>{user.full_name}</b>\n"
-                f"📄 Заявка: {app.content}\n"
-                f"📅 Дата создания: {app.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"📊 Статус: {app.status}\n\n"
+            await callback.message.answer(
+                text=(
+                    f"👤 <b>{user.full_name}</b> — <a href='tg://user?id={user.telegram_id}'>[написать]</a>\n"
+                    f"📄 Заявка: {app.content}\n"
+                    f"📅 Дата: {app.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"📊 Статус: {app.status}"
+                ),
+                reply_markup=get_status_buttons(app.id)
             )
-        
+
         # Если заявок слишком много, можем разбить ответ на несколько частей
         if len(response) > 4000:
             parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
@@ -156,6 +175,53 @@ async def view_requests(callback: CallbackQuery):
     
     await show_dean_menu(callback.message)
     session.close()
+
+@router.callback_query(F.data.startswith("status_"))
+async def change_status(callback: CallbackQuery):
+    session = get_db_session()
+
+    try:
+        _, action, app_id = callback.data.split("_")
+        app_id = int(app_id)
+
+        status_map = {
+            "accept": "Принята",
+            "process": "В процессе",
+            "reject": "Отклонена",
+            "done": "Выполнена"
+        }
+
+        new_status = status_map.get(action)
+        if not new_status:
+            await callback.answer("❌ Неизвестный статус")
+            return
+
+        app = session.query(Application).filter_by(id=app_id).first()
+        if not app:
+            await callback.answer("❌ Заявка не найдена")
+            return
+
+        app.status = new_status
+        session.commit()
+
+        await callback.answer(f"✅ Статус изменён на «{new_status}»")
+
+        # Уведомляем студента
+        await callback.bot.send_message(
+            chat_id=app.user.telegram_id,
+            text=(
+                f"📢 Ваша заявка обновлена!\n\n"
+                f"{app.content}\n\n"
+                f"📊 Новый статус: <b>{new_status}</b>"
+            )
+        )
+
+    except Exception as e:
+        print("Ошибка при изменении статуса:", e)
+        await callback.answer("❌ Ошибка изменения статуса")
+    finally:
+        session.close()
+
 
 # Обработка кнопки "Сегодня"
 @router.callback_query(F.data == "today_schedule")
@@ -197,6 +263,37 @@ async def two_weeks_schedule(callback: CallbackQuery):
             await callback.message.edit_text("❌ Расписание на две недели не найдено.")
     await show_main_menu(callback.message)
     session.close()
+
+# Просмотр собственных заявок студентом
+@router.callback_query(F.data == "my_requests")
+async def my_requests(callback: CallbackQuery):
+    session = get_db_session()
+    user = session.query(User).filter_by(telegram_id=callback.from_user.id).first()
+
+    if not user:
+        await callback.message.edit_text("❌ Пользователь не найден.")
+        session.close()
+        return
+
+    applications = session.query(Application).filter_by(user_id=user.id).all()
+
+    if not applications:
+        await callback.message.edit_text("❌ У вас пока нет заявок.")
+    else:
+        # Показываем каждую заявку отдельным сообщением
+        for app in applications:
+            await callback.message.answer(
+                text=(
+                    f"📄 Заявка: {app.content}\n"
+                    f"📅 Дата: {app.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"📊 Статус: {app.status}"
+                )
+            )
+
+    # Возвращаемся в меню
+    await show_main_menu(callback.message)
+    session.close()
+
 
 # Функция для формирования расписания в текстовом формате
 def format_schedule(schedule, two_weeks=False):
