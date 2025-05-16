@@ -26,6 +26,15 @@ class EventCreation(StatesGroup):
 # Команда /start — регистрация или приветствие
 @router.message(Command("start"))
 async def start_handler(message: Message):
+
+# Удаляем последние 20 сообщений (по возможности)
+    bot = message.bot  # ← получаем объект бота из сообщения
+    for i in range(message.message_id - 1, message.message_id - 20, -1):
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=i)
+        except:
+            continue  # просто пропускаем ошибки, если сообщение не удалить
+
     session = get_db_session()
     user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
 
