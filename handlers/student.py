@@ -40,7 +40,9 @@ async def start_handler(message: Message):
 
     if user:
         await message.answer(f"С возвращением, {user.full_name}!")
-        if message.from_user.id in DEAN_IDS:  # Проверяем, является ли это деканат
+        if user.role == "dean":
+            await show_dean_menu(message)
+        elif user.role == "admin":
             await show_dean_menu(message)
         else:
             await show_main_menu(message)

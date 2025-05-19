@@ -22,6 +22,8 @@ class User(Base):
     telegram_id = Column(Integer, unique=True)  # ID пользователя в Telegram
     full_name = Column(String(100))             # ФИО
     group_id = Column(Integer, ForeignKey('groups.id'))  # Внешний ключ на группу
+    role = Column(String(20), default="student")
+
 
     group = relationship("Group", back_populates="users")  # Связь: пользователь → группа
     applications = relationship("Application", back_populates="user")
@@ -234,4 +236,3 @@ def register_for_event(user_id: int, event_id: int):
         return False
     finally:
         session.close()
-

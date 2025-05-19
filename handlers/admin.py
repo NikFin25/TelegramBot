@@ -14,6 +14,10 @@ router = Router()
 class FindStudent(StatesGroup):
     query = State()
 
+class SetRole(StatesGroup):
+    waiting_for_telegram_id = State()
+    waiting_for_role = State()
+
 # =============================
 # 1. Главное админ-меню
 # =============================
@@ -178,6 +182,43 @@ async def admin_reset_all_fsm(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Все FSM-состояния текущего пользователя сброшены.")
 
+# Назначение роли /set_role
+@router.message(Command("set_role"))
+async def cmd_set_role(message: Message, state: FSMContext):
+    await message.answer("Введите Telegram ID пользователя, которому нужно назначить роль:")
+    await state.set_state(SetRole.waiting_for_telegram_id)
+
+@router.message(SetRole.waiting_for_telegram_id)
+async def process_telegram_id(message: Message, state: FSMContext):
+    telegram_id = message.text.strip()
+    if not telegram_id.isdigit():
+        await message.answer("❌ Введите корректный числовой Telegram ID.")
+        return
+    await state.update_data(telegram_id=int(telegram_id))
+    await message.answer("Введите новую роль для пользователя: student / dean / admin")
+    await state.set_state(SetRole.waiting_for_role)
+
+@router.message(SetRole.waiting_for_role)
+async def process_new_role(message: Message, state: FSMContext):
+    role = message.text.strip().lower()
+    if role not in ["student", "dean", "admin"]:
+        await message.answer("❌ Недопустимая роль. Введите: student / dean / admin")
+        return
+
+    data = await state.get_data()
+    telegram_id = data["telegram_id"]
+
+    session = get_db_session()
+    user = session.query(User).filter_by(telegram_id=telegram_id).first()
+    if not user:
+        await message.answer("❌ Пользователь не найден.")
+    else:
+        user.role = role
+        session.commit()
+        await message.answer(f"✅ Роль пользователя <b>{user.full_name}</b> обновлена на <b>{role}</b>.")
+
+    await state.clear()
+    session.close()
 
 # =============================
 # 8. Регистрация роутера
