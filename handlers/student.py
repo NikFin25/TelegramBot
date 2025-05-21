@@ -5,7 +5,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application
-from config import DEAN_IDS
 
 # Для каждого сотрудника деканата храним список message_id,
 # чтобы потом подчистить старые сообщения со списком заявок.
