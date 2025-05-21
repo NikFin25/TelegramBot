@@ -81,6 +81,16 @@ class EventParticipant(Base):
     event = relationship("Event", back_populates="participants")
     user = relationship("User")  # связь с таблицей users
 
+# Модель разрешённых пользователей (для предварительного списка)
+class AllowedUser(Base):
+    __tablename__ = "allowed_users"
+
+    id = Column(Integer, primary_key=True)
+    full_name = Column(String(100), nullable=False)
+    group_name = Column(String(50), nullable=False)
+    used = Column(Integer, default=0)  # 0 — не использован, 1 — использован
+
+
 # Подключение к SQLite-базе
 engine = create_engine('sqlite:///database/bot_database.db')
 
@@ -92,6 +102,28 @@ Session = sessionmaker(bind=engine)
 
 def get_db_session():
     return Session()
+
+def validate_allowed_user(full_name, group_name):
+    session = get_db_session()
+    from sqlalchemy import and_
+    from database.db import AllowedUser  # Импортируй модель, если есть, или используй raw SQL
+
+    user = session.query(AllowedUser).filter(
+        and_(
+            AllowedUser.full_name == full_name,
+            AllowedUser.group_name == group_name,
+            AllowedUser.used == False
+        )
+    ).first()
+
+    if user:
+        user.used = True  # помечаем как использованного
+        session.commit()
+        session.close()
+        return True
+    session.close()
+    return False
+
 
 def get_today_schedule(group_name: str):
     session = Session()

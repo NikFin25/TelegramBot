@@ -1,12 +1,15 @@
 # handlers/admin.py
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, Document
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from database.db import get_db_session, User, Application, Event
+from database.db import get_db_session, User, Application, Event, AllowedUser
+from sqlalchemy.exc import IntegrityError
+import openpyxl
+import io
 from config import ADMIN_IDS
 
 router = Router()
@@ -28,6 +31,7 @@ async def show_admin_menu(message: Message):
     kb.button(text="🔍 Поиск студента", callback_data="admin_find_user")
     kb.button(text="📊 Отчёты", callback_data="admin_stats")
     kb.button(text="🧹 Очистить заявки", callback_data="admin_clear_apps")
+    kb.button(text="📤 Импорт списка студентов (Excel)", callback_data="admin_upload_excel")
     kb.adjust(1)
     await message.answer("🛠 <b>Админ-панель</b>", reply_markup=kb.as_markup())
 
@@ -170,9 +174,9 @@ async def admin_clear_confirm(callback: CallbackQuery):
     await show_admin_menu(callback.message)
 
 
-# =============================
-# 7. Сброс всех FSM состояний /admin_reset_all_fsm
-# =============================
+
+# Сброс всех FSM состояний /admin_reset_all_fsm
+
 @router.message(Command("admin_reset_all_fsm"))
 async def admin_reset_all_fsm(message: Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
@@ -220,9 +224,58 @@ async def process_new_role(message: Message, state: FSMContext):
     await state.clear()
     session.close()
 
-# =============================
-# 8. Регистрация роутера
-# =============================
+# Обработчик кнопки загрузки excel
+@router.callback_query(F.data == "admin_upload_excel")
+async def prompt_excel_upload(callback: CallbackQuery):
+    await callback.message.answer("📎 Отправьте Excel-файл (.xlsx) со списком студентов.\n"
+                                  "Формат: <code>ФИО | Группа</code> (первая строка — заголовки).")
+    await callback.answer()
+
+#Обработка excel
+@router.message(F.document)
+async def handle_excel_upload(message: Message):
+    document = message.document
+
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    if not document.file_name.endswith(".xlsx"):
+        await message.answer("❌ Пожалуйста, отправьте файл в формате .xlsx")
+        return
+
+    file = await message.bot.get_file(document.file_id)
+    file_data = await message.bot.download_file(file.file_path)
+
+    try:
+        workbook = openpyxl.load_workbook(filename=io.BytesIO(file_data.read()))
+        sheet = workbook.active
+    except Exception:
+        await message.answer("❌ Не удалось прочитать Excel-файл. Убедитесь, что он в правильном формате.")
+        return
+
+    session = get_db_session()
+
+    # Удаляем все старые записи
+    session.query(AllowedUser).delete()
+    session.commit()
+
+    added = 0
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        if not row or not row[0] or not row[1]:
+            continue
+        full_name = row[0].strip()
+        group = row[1].strip()
+
+        user = AllowedUser(full_name=full_name, group_name=group)
+        session.add(user)
+        added += 1
+
+    session.commit()
+    session.close()
+
+    await message.answer(f"✅ Импорт завершён. Добавлено {added} студентов.")
+
+# Регистрация роутера
 
 def register(dp):
     dp.include_router(router)

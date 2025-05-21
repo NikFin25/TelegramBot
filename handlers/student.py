@@ -4,8 +4,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application
-from handlers.dean import show_dean_menu1
+from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application, validate_allowed_user, AllowedUser
+from handlers.dean import show_dean_menu
 
 router = Router()
 # Состояния подачи заявки. subject — для темы заявки; description — для описания.
@@ -16,14 +16,14 @@ class ApplicationForm(StatesGroup):
 # Команда /start — регистрация или приветствие
 @router.message(Command("start"))
 async def start_handler(message: Message):
+    bot = message.bot  # получаем объект бота
 
-# Удаляем последние 20 сообщений (по возможности)
-    bot = message.bot  # ← получаем объект бота из сообщения
+    # Удаляем последние 20 сообщений (по возможности)
     for i in range(message.message_id - 1, message.message_id - 20, -1):
         try:
             await bot.delete_message(chat_id=message.chat.id, message_id=i)
         except:
-            continue  # просто пропускаем ошибки, если сообщение не удалить
+            continue
 
     session = get_db_session()
     user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
@@ -36,14 +36,17 @@ async def start_handler(message: Message):
             await show_dean_menu(message)
         else:
             await show_main_menu(message)
+
     else:
+        # Новый пользователь — просим ввести ФИО и группу
         await message.answer(
             "Введите ваше <b>ФИО и группу</b> в формате:\n"
             "<i>Иванов Иван Иванович 21-СПО-ИСиП-02</i>"
         )
+
     session.close()
 
-# Обработка ввода ФИО и группы
+# Проверка перед регистрацией
 @router.message(F.text.regexp(r'^[А-ЯЁа-яё-]+\s[А-ЯЁа-яё-]+\s[А-ЯЁа-яё-]+\s[\dА-ЯЁа-яё-]+$'))
 async def register_user_handler(message: Message):
     parts = message.text.split()
@@ -54,15 +57,28 @@ async def register_user_handler(message: Message):
     full_name = " ".join(parts[:3])
     group_name = " ".join(parts[3:])
 
+    # 🔒 Проверка в таблице allowed_users
+    if not validate_allowed_user(full_name, group_name):
+        await message.answer("❌ Регистрация отклонена. Ваши данные не найдены в списке студентов.")
+        return
+
+    # Регистрация, если данные прошли проверку
     if register_user(message.from_user.id, full_name, group_name):
+        # ✅ Получаем только что зарегистрированного пользователя
+        session = get_db_session()
+        user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
+
         await message.answer(
             f"✅ Регистрация успешна!\n"
             f"ФИО: {full_name}\n"
             f"Группа: {group_name}"
         )
         await show_main_menu(message)
+
+        session.close()
     else:
         await message.answer("❌ Ошибка регистрации. Возможно, вы уже зарегистрированы.")
+
 
 # Главное меню для студента
 async def show_main_menu(message: Message):
@@ -102,31 +118,35 @@ async def receive_description(message: Message, state: FSMContext):
     session = get_db_session()
     user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
 
-    if user:
-        from database.db import Application
-        full_name = user.full_name
-        group = user.group.name if user.group else "Группа не указана"
+    if not user:
+        await message.answer("❌ Вы не зарегистрированы. Пожалуйста, введите свои ФИО и группу.")
+        await state.clear()
+        session.close()
+        return  # ⛔ не продолжаем выполнение
 
-        content = (
-            f"📩 <b>Новая заявка от студента</b>\n"
-            f"👤 <b>ФИО:</b> {full_name}\n"
-            f"🏫 <b>Группа:</b> {group}\n\n"
-            f"📌 <b>Тема:</b> {subject}\n"
-            f"📝 <b>Описание:</b> {description or '—'}"
-        )
+    from database.db import Application
+    full_name = user.full_name
+    group = user.group.name if user.group else "Группа не указана"
 
-        new_app = Application(
-            user_id=user.id,
-            content=content
-        )
-        session.add(new_app)
-        session.commit()
-        await message.answer("✅ Ваша заявка была отправлена в деканат.")
-    else:
-        await message.answer("❌ Не удалось отправить заявку. Пользователь не найден.")
+    content = (
+        f"📩 <b>Новая заявка от студента</b>\n"
+        f"👤 <b>ФИО:</b> {full_name}\n"
+        f"🏫 <b>Группа:</b> {group}\n\n"
+        f"📌 <b>Тема:</b> {subject}\n"
+        f"📝 <b>Описание:</b> {description or '—'}"
+    )
+
+    new_app = Application(
+        user_id=user.id,
+        content=content
+    )
+    session.add(new_app)
+    session.commit()
+    await message.answer("✅ Ваша заявка была отправлена в деканат.")
 
     await state.clear()
     session.close()
+
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
