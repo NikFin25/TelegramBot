@@ -2,6 +2,9 @@
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
+from datetime import date
+from sqlalchemy import Date
+
 
 # Базовый класс для моделей SQLAlchemy
 Base = declarative_base()
@@ -90,6 +93,13 @@ class AllowedUser(Base):
     group_name = Column(String(50), nullable=False)
     used = Column(Integer, default=0)  # 0 — не использован, 1 — использован
 
+class Semester(Base):
+    __tablename__ = "semesters"
+    id = Column(Integer, primary_key=True)
+    number = Column(Integer)          # 1…8
+    date_start = Column(Date)         # 01-09-2024
+    date_end = Column(Date)           # 31-12-2024
+    group_id = Column(Integer, ForeignKey("groups.id"))
 
 # Подключение к SQLite-базе
 engine = create_engine('sqlite:///database/bot_database.db')
@@ -127,12 +137,25 @@ def validate_allowed_user(full_name, group_name):
 
 def get_today_schedule(group_name: str):
     session = Session()
-    today = datetime.today().strftime('%A').upper()  # Получаем день недели
+
+    # Сопоставление английских названий с русскими
+    days_map = {
+        'MONDAY': 'ПОНЕДЕЛЬНИК',
+        'TUESDAY': 'ВТОРНИК',
+        'WEDNESDAY': 'СРЕДА',
+        'THURSDAY': 'ЧЕТВЕРГ',
+        'FRIDAY': 'ПЯТНИЦА',
+        'SATURDAY': 'СУББОТА',
+        'SUNDAY': 'ВОСКРЕСЕНЬЕ'
+    }
+
+    today_eng = datetime.today().strftime('%A').upper()
+    today_rus = days_map.get(today_eng)
     current_week = get_current_week_number()
-    
+
     today_schedule = session.query(Schedule).join(Group).filter(
         Group.name == group_name,
-        Schedule.day_of_week == today,
+        Schedule.day_of_week == today_rus,
         Schedule.week_number == current_week
     ).all()
 
@@ -140,9 +163,8 @@ def get_today_schedule(group_name: str):
         session.close()
         return None
 
-    # Формируем структуру, которую ожидает student.py
     result = {
-        today: [{
+        today_rus: [{
             'time': item.time,
             'subject': item.subject,
             'auditorium': item.room,
@@ -156,17 +178,18 @@ def get_today_schedule(group_name: str):
 
 def get_two_weeks_schedule(group_name: str):
     session = Session()
-    # Порядок дней недели для сортировки
+
+    # Порядок русских дней недели
     day_order = {
-        'MONDAY': 1,
-        'TUESDAY': 2,
-        'WEDNESDAY': 3,
-        'THURSDAY': 4,
-        'FRIDAY': 5,
-        'SATURDAY': 6,
-        'SUNDAY': 7
+        'ПОНЕДЕЛЬНИК': 1,
+        'ВТОРНИК': 2,
+        'СРЕДА': 3,
+        'ЧЕТВЕРГ': 4,
+        'ПЯТНИЦА': 5,
+        'СУББОТА': 6,
+        'ВОСКРЕСЕНЬЕ': 7
     }
-    
+
     schedule = session.query(Schedule).join(Group).filter(
         Group.name == group_name
     ).all()
@@ -175,32 +198,37 @@ def get_two_weeks_schedule(group_name: str):
         session.close()
         return None
 
-    # Создаем структуру: {неделя: {день: [пары]}}
     result = {}
     for item in schedule:
         week_key = f"Неделя {item.week_number}"
         if week_key not in result:
             result[week_key] = {}
-        
+
         if item.day_of_week not in result[week_key]:
             result[week_key][item.day_of_week] = []
-        
+
         result[week_key][item.day_of_week].append({
             'time': item.time,
             'subject': item.subject,
             'auditorium': item.room,
             'teacher': item.teacher,
-            'day_order': day_order.get(item.day_of_week, 8)  # Добавляем порядковый номер дня
+            'day_order': day_order.get(item.day_of_week, 8)
         })
-    
+
     session.close()
     return result
 
 def get_current_week_number():
-    # Пример реализации - можно заменить на свою логику определения недели
-    # Например, можно считать, что первая неделя - нечётная, вторая - чётная
     current_week = datetime.today().isocalendar()[1]  # Номер недели в году
     return 1 if current_week % 2 else 2
+
+def get_current_semester(session, group):
+    today = date.today()
+    return session.query(Semester).filter(
+        Semester.group_id==group.id,
+        Semester.date_start<=today,
+        Semester.date_end>=today
+    ).first()
 
 def get_or_create_group(session, group_name: str):
     group_name = group_name.upper()  # Приводим к ВЕРХНЕМУ регистру

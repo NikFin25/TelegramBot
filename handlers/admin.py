@@ -6,13 +6,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from database.db import get_db_session, User, Application, Event, AllowedUser
+from database.db import get_db_session, User, Application, Event, AllowedUser, get_or_create_group
 from sqlalchemy.exc import IntegrityError
 import openpyxl
 import io
 from config import ADMIN_IDS
 
 router = Router()
+
+class UploadExcel(StatesGroup):
+    type = State()
 
 class FindStudent(StatesGroup):
     query = State()
@@ -31,7 +34,9 @@ async def show_admin_menu(message: Message):
     kb.button(text="🔍 Поиск студента", callback_data="admin_find_user")
     kb.button(text="📊 Отчёты", callback_data="admin_stats")
     kb.button(text="🧹 Очистить заявки", callback_data="admin_clear_apps")
+    kb.button(text="📅 Импорт расписания (Excel)", callback_data="admin_upload_schedule")
     kb.button(text="📤 Импорт списка студентов (Excel)", callback_data="admin_upload_excel")
+    
     kb.adjust(1)
     await message.answer("🛠 <b>Админ-панель</b>", reply_markup=kb.as_markup())
 
@@ -75,6 +80,15 @@ async def admin_users(callback: CallbackQuery):
 async def admin_find_user(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("🔎 Введите ФИО, группу или Telegram ID для поиска:")
     await state.set_state(FindStudent.query)
+
+@router.callback_query(F.data == "admin_upload_schedule")
+async def prompt_schedule_upload(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("📎 Отправьте Excel-файл с расписанием занятий.\n"
+                                  "Формат: Группа | День недели | Время | Предмет | Преподаватель | Аудитория | Неделя")
+    await state.set_state(UploadExcel.type)
+    await state.update_data(file_type="schedule")
+    await callback.answer()
+
 
 @router.message(FindStudent.query)
 async def process_find_student(message: Message, state: FSMContext):
@@ -226,24 +240,24 @@ async def process_new_role(message: Message, state: FSMContext):
 
 # Обработчик кнопки загрузки excel
 @router.callback_query(F.data == "admin_upload_excel")
-async def prompt_excel_upload(callback: CallbackQuery):
+async def prompt_excel_upload(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("📎 Отправьте Excel-файл (.xlsx) со списком студентов.\n"
                                   "Формат: <code>ФИО | Группа</code> (первая строка — заголовки).")
+    await state.set_state(UploadExcel.type)
+    await state.update_data(file_type="students")
     await callback.answer()
 
 #Обработка excel
-@router.message(F.document)
-async def handle_excel_upload(message: Message):
-    document = message.document
+@router.message(UploadExcel.type)
+async def handle_excel_file(message: Message, state: FSMContext):
+    data = await state.get_data()
+    file_type = data.get("file_type")
 
-    if message.from_user.id not in ADMIN_IDS:
-        return
-
-    if not document.file_name.endswith(".xlsx"):
+    if not message.document.file_name.endswith(".xlsx"):
         await message.answer("❌ Пожалуйста, отправьте файл в формате .xlsx")
         return
 
-    file = await message.bot.get_file(document.file_id)
+    file = await message.bot.get_file(message.document.file_id)
     file_data = await message.bot.download_file(file.file_path)
 
     try:
@@ -254,26 +268,47 @@ async def handle_excel_upload(message: Message):
         return
 
     session = get_db_session()
-
-    # Удаляем все старые записи
-    session.query(AllowedUser).delete()
-    session.commit()
-
     added = 0
-    for row in sheet.iter_rows(min_row=2, values_only=True):
-        if not row or not row[0] or not row[1]:
-            continue
-        full_name = row[0].strip()
-        group = row[1].strip()
 
-        user = AllowedUser(full_name=full_name, group_name=group)
-        session.add(user)
-        added += 1
+    if file_type == "students":
+        session.query(AllowedUser).delete()
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0] or not row[1]:
+                continue
+            full_name = str(row[0]).strip()
+            group = str(row[1]).strip()
+            user = AllowedUser(full_name=full_name, group_name=group)
+            session.add(user)
+            added += 1
+        await message.answer(f"✅ Импорт студентов завершён. Добавлено {added} записей.")
+
+    elif file_type == "schedule":
+        from database.db import Schedule, get_or_create_group
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not all(row) or len(row) < 7:
+                continue
+            group_name, day, time, subject, teacher, room, week = [str(cell).strip() for cell in row]
+            week = int(week) if week in ['1', '2'] else 1
+
+            group = get_or_create_group(session, group_name)
+            new_schedule = Schedule(
+                group_id=group.id,
+                day_of_week=day.upper(),
+                time=time,
+                subject=subject,
+                teacher=teacher,
+                room=room,
+                week_number=week
+            )
+            session.add(new_schedule)
+            added += 1
+        await message.answer(f"✅ Импорт расписания завершён. Добавлено {added} записей.")
 
     session.commit()
     session.close()
+    await state.clear()
 
-    await message.answer(f"✅ Импорт завершён. Добавлено {added} студентов.")
+
 
 # Регистрация роутера
 
