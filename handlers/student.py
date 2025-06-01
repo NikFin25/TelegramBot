@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application, validate_allowed_user, AllowedUser
+from database.db import get_db_session, register_user, User, get_today_schedule, get_two_weeks_schedule, Application, validate_allowed_user, AllowedUser, get_current_semester, get_or_create_group
 from handlers.dean import show_dean_menu
 
 router = Router()
@@ -246,7 +246,6 @@ async def today_schedule(callback: CallbackQuery):
     await show_main_menu(callback.message)
     session.close()
 
-# Обработка кнопки "Расписание на 2 недели"
 @router.callback_query(F.data == "two_weeks_schedule")
 async def two_weeks_schedule(callback: CallbackQuery):
     session = get_db_session()
@@ -254,9 +253,23 @@ async def two_weeks_schedule(callback: CallbackQuery):
 
     if user:
         schedule = get_two_weeks_schedule(user.group.name)
+
+        # Получаем семестр для текущей группы
+        group = get_or_create_group(session, user.group.name)
+        semester = get_current_semester(session, group)
+
+        semester_info = ""
+        if semester:
+            semester_info = (
+                f"📘 <b>Семестр:</b>\n"
+                f"Начало: <code>{semester.date_start.strftime('%d.%m.%Y')}</code>\n"
+                f"Окончание: <code>{semester.date_end.strftime('%d.%m.%Y')}</code>\n\n"
+            )
+
         if schedule:
-            formatted = format_schedule(schedule, two_weeks=True)
-            # Разбиваем длинное сообщение на части, если оно слишком большое
+            formatted = semester_info + format_schedule(schedule, two_weeks=True)
+            
+            # Разбиваем длинное сообщение на части
             if len(formatted) > 4000:
                 parts = [formatted[i:i+4000] for i in range(0, len(formatted), 4000)]
                 for part in parts:
@@ -265,6 +278,7 @@ async def two_weeks_schedule(callback: CallbackQuery):
                 await callback.message.edit_text(f"📅 <b>Расписание на 2 недели:</b>\n{formatted}")
         else:
             await callback.message.edit_text("❌ Расписание на две недели не найдено.")
+
     await show_main_menu(callback.message)
     session.close()
 

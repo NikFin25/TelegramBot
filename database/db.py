@@ -9,6 +9,15 @@ from sqlalchemy import Date
 # Базовый класс для моделей SQLAlchemy
 Base = declarative_base()
 
+# Вспомогательная таблица для связи семестров и групп
+from sqlalchemy import Table
+semester_group_association = Table(
+    'semester_group_association',
+    Base.metadata,
+    Column('semester_id', Integer, ForeignKey('semesters.id')),
+    Column('group_id', Integer, ForeignKey('groups.id'))
+)
+
 # Модель группы
 class Group(Base):
     __tablename__ = 'groups'
@@ -17,6 +26,7 @@ class Group(Base):
 
     users = relationship("User", back_populates="group")  # Связь: группа → список пользователей
     schedule = relationship("Schedule", back_populates="group") # Связь: группа → расписание
+    semesters = relationship("Semester", secondary=semester_group_association, back_populates="groups")
 
 # Модель пользователя
 class User(Base):
@@ -93,13 +103,19 @@ class AllowedUser(Base):
     group_name = Column(String(50), nullable=False)
     used = Column(Integer, default=0)  # 0 — не использован, 1 — использован
 
+
+#Модель семестров
 class Semester(Base):
     __tablename__ = "semesters"
+
     id = Column(Integer, primary_key=True)
-    number = Column(Integer)          # 1…8
-    date_start = Column(Date)         # 01-09-2024
-    date_end = Column(Date)           # 31-12-2024
-    group_id = Column(Integer, ForeignKey("groups.id"))
+    number = Column(Integer, nullable=False)
+    group_name = Column(String, nullable=False)  
+    date_start = Column(Date, nullable=False)
+    date_end = Column(Date, nullable=False)
+
+    groups = relationship("Group", secondary=semester_group_association, back_populates="semesters")
+
 
 # Подключение к SQLite-базе
 engine = create_engine('sqlite:///database/bot_database.db')
@@ -222,13 +238,15 @@ def get_current_week_number():
     current_week = datetime.today().isocalendar()[1]  # Номер недели в году
     return 1 if current_week % 2 else 2
 
-def get_current_semester(session, group):
+def get_current_semester(session, group_name: str):
     today = date.today()
     return session.query(Semester).filter(
-        Semester.group_id==group.id,
-        Semester.date_start<=today,
-        Semester.date_end>=today
+        Semester.group_name == group_name,
+        Semester.date_start <= today,
+        Semester.date_end >= today
     ).first()
+
+
 
 def get_or_create_group(session, group_name: str):
     group_name = group_name.upper()  # Приводим к ВЕРХНЕМУ регистру

@@ -6,10 +6,17 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from database.db import get_db_session, User, Application, Event, AllowedUser, get_or_create_group
+from database.db import get_db_session, User, Application, Event, AllowedUser, get_or_create_group, Group, Semester
 from sqlalchemy.exc import IntegrityError
 import openpyxl
 import io
+import os
+import openpyxl
+from datetime import datetime
+from aiogram.types import ContentType, Message
+from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
+
 from config import ADMIN_IDS
 
 router = Router()
@@ -248,49 +255,68 @@ async def prompt_excel_upload(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 #Обработка excel
-@router.message(UploadExcel.type)
+@router.message(F.content_type == ContentType.DOCUMENT, StateFilter(UploadExcel.type))
 async def handle_excel_file(message: Message, state: FSMContext):
-    data = await state.get_data()
-    file_type = data.get("file_type")
+    os.makedirs("temp", exist_ok=True) # Убедимся, что папка temp существует
+    document = message.document
+    file_path = f"temp/{document.file_name}"
+    await message.bot.download(document, destination=file_path)
 
-    if not message.document.file_name.endswith(".xlsx"):
-        await message.answer("❌ Пожалуйста, отправьте файл в формате .xlsx")
-        return
-
-    file = await message.bot.get_file(message.document.file_id)
-    file_data = await message.bot.download_file(file.file_path)
-
-    try:
-        workbook = openpyxl.load_workbook(filename=io.BytesIO(file_data.read()))
-        sheet = workbook.active
-    except Exception:
-        await message.answer("❌ Не удалось прочитать Excel-файл. Убедитесь, что он в правильном формате.")
-        return
+    wb = openpyxl.load_workbook(file_path)
+    sheet = wb.active
 
     session = get_db_session()
     added = 0
 
-    if file_type == "students":
-        session.query(AllowedUser).delete()
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not row or not row[0] or not row[1]:
-                continue
-            full_name = str(row[0]).strip()
-            group = str(row[1]).strip()
-            user = AllowedUser(full_name=full_name, group_name=group)
-            session.add(user)
-            added += 1
-        await message.answer(f"✅ Импорт студентов завершён. Добавлено {added} записей.")
+    file_type = (await state.get_data()).get("file_type")
 
-    elif file_type == "schedule":
-        from database.db import Schedule, get_or_create_group
+    if file_type == "schedule":
+        from database.db import Schedule, get_or_create_group, Semester, Group
+        from datetime import datetime
+
+        semester_dates = {}
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not all(row) or len(row) < 7:
+            sem_group = str(row[8]).strip() if row[8] else None
+            start_date = row[9]
+            end_date = row[10]
+            if sem_group and isinstance(start_date, datetime) and isinstance(end_date, datetime):
+                semester_dates[sem_group] = (start_date.date(), end_date.date())
+
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not all(row[:7]):
                 continue
-            group_name, day, time, subject, teacher, room, week = [str(cell).strip() for cell in row]
-            week = int(week) if week in ['1', '2'] else 1
+
+            print(f"Импортируем строку: {row}")
+
+            group_name = str(row[0]).strip()
+            day = str(row[1]).strip()
+            time = str(row[2]).strip()
+            subject = str(row[3]).strip()
+            teacher = str(row[4]).strip()
+            room = str(row[5]).strip()
+            week = int(str(row[6]).strip()) if str(row[6]).strip() in ['1', '2'] else 1
 
             group = get_or_create_group(session, group_name)
+
+            if group_name in semester_dates:
+                start_date, end_date = semester_dates[group_name]
+
+                existing_semester = (
+                    session.query(Semester)
+                    .join(Semester.groups)
+                    .filter(Group.id == group.id)
+                    .first()
+                )
+                if not existing_semester:
+                    semester = Semester(
+                        number=1,
+                        date_start=start_date,
+                        date_end=end_date,
+                        group_name=group_name,
+                        groups=[group]
+                    )
+                    session.add(semester)
+
             new_schedule = Schedule(
                 group_id=group.id,
                 day_of_week=day.upper(),
@@ -302,11 +328,13 @@ async def handle_excel_file(message: Message, state: FSMContext):
             )
             session.add(new_schedule)
             added += 1
+
         await message.answer(f"✅ Импорт расписания завершён. Добавлено {added} записей.")
 
     session.commit()
     session.close()
     await state.clear()
+
 
 
 
