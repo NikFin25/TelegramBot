@@ -1,10 +1,8 @@
-# db.py
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 from datetime import date
 from sqlalchemy import Date
-
 
 # Базовый класс для моделей SQLAlchemy
 Base = declarative_base()
@@ -49,7 +47,7 @@ class Schedule(Base):
     subject = Column(String(100))  # Название предмета
     teacher = Column(String(100))  # Преподаватель
     day_of_week = Column(String(20))  # День недели
-    time = Column(String(20))  # Время пары (например, "08:00-09:30")
+    time = Column(String(20))  # Время пары 
     room = Column(String(50))  # Аудитория
     week_number = Column(Integer) 
 
@@ -129,10 +127,11 @@ Session = sessionmaker(bind=engine)
 def get_db_session():
     return Session()
 
+#проверка на разрешенного пользователя
 def validate_allowed_user(full_name, group_name):
     session = get_db_session()
     from sqlalchemy import and_
-    from database.db import AllowedUser  # Импортируй модель, если есть, или используй raw SQL
+    from database.db import AllowedUser  
 
     user = session.query(AllowedUser).filter(
         and_(
@@ -195,7 +194,7 @@ def get_today_schedule(group_name: str):
 def get_two_weeks_schedule(group_name: str):
     session = Session()
 
-    # Порядок русских дней недели
+    
     day_order = {
         'ПОНЕДЕЛЬНИК': 1,
         'ВТОРНИК': 2,
@@ -236,16 +235,15 @@ def get_two_weeks_schedule(group_name: str):
 
 def get_current_week_number():
     current_week = datetime.today().isocalendar()[1]  # Номер недели в году
-    return 1 if current_week % 2 else 2
+    return 1 if current_week % 2 else 2 # ост 1 - нечетная, 0 - четная
 
 def get_current_semester(session, group_name: str):
     today = date.today()
     return session.query(Semester).filter(
         Semester.group_name == group_name,
-        Semester.date_start <= today,
-        Semester.date_end >= today
+        Semester.date_start <= today, #начался не позже сегодняшнего дня
+        Semester.date_end >= today # и ещё не закончился
     ).first()
-
 
 
 def get_or_create_group(session, group_name: str):

@@ -1,4 +1,3 @@
-# handlers/admin.py
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, Document
@@ -31,9 +30,9 @@ class SetRole(StatesGroup):
     waiting_for_telegram_id = State()
     waiting_for_role = State()
 
-# =============================
-# 1. Главное админ-меню
-# =============================
+
+# Главное админ-меню
+
 async def show_admin_menu(message: Message):
     """Показывает клавиатуру администратора."""
     kb = InlineKeyboardBuilder()
@@ -48,9 +47,8 @@ async def show_admin_menu(message: Message):
     await message.answer("🛠 <b>Админ-панель</b>", reply_markup=kb.as_markup())
 
 
-# =============================
-# 2. Вход в админ-панель
-# =============================
+
+# Вход в админ-панель
 @router.message(Command("admin"))
 async def admin_panel_cmd(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -59,9 +57,8 @@ async def admin_panel_cmd(message: Message):
     await show_admin_menu(message)
 
 
-# =============================
-# 3. Просмотр списка пользователей
-# =============================
+
+# Просмотр списка пользователей
 @router.callback_query(F.data == "admin_users")
 async def admin_users(callback: CallbackQuery):
     session = get_db_session()
@@ -111,7 +108,7 @@ async def process_find_student(message: Message, state: FSMContext):
     if not results:
         await message.answer("❌ Пользователь не найден.")
     else:
-        for user in results[:10]:  # ограничим до 10
+        for user in results[:10]:  
             kb = InlineKeyboardBuilder()
             kb.button(text="❌ Удалить", callback_data=f"admin_delete_user_{user.id}")
             await message.answer(
@@ -125,9 +122,8 @@ async def process_find_student(message: Message, state: FSMContext):
     session.close()
 
 
-# =============================
-# 4. Удаление пользователя вручную
-# =============================
+
+# Удаление пользователя
 @router.callback_query(F.data.startswith("admin_delete_user_"))
 async def admin_delete_user(callback: CallbackQuery):
     user_id = int(callback.data.split("_")[-1])
@@ -145,9 +141,8 @@ async def admin_delete_user(callback: CallbackQuery):
     session.close()
 
 
-# =============================
-# 5. Статистика проекта
-# =============================
+
+# Статистика проекта
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
     session = get_db_session()
@@ -168,9 +163,8 @@ async def admin_stats(callback: CallbackQuery):
     session.close()
 
 
-# =============================
-# 6. Очистка всех заявок
-# =============================
+
+# Очистка всех заявок
 @router.callback_query(F.data == "admin_clear_apps")
 async def admin_clear_apps(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
@@ -266,7 +260,7 @@ async def handle_excel_file(message: Message, state: FSMContext):
     sheet = wb.active
 
     session = get_db_session()
-    added = 0
+    added = 0 # Счетчик записей
 
     file_type = (await state.get_data()).get("file_type")
 
@@ -275,10 +269,10 @@ async def handle_excel_file(message: Message, state: FSMContext):
         from datetime import datetime
 
         semester_dates = {}
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            sem_group = str(row[8]).strip() if row[8] else None
-            start_date = row[9]
-            end_date = row[10]
+        for row in sheet.iter_rows(min_row=2, values_only=True): # Первый проход начиня со второй стр
+            sem_group = str(row[8]).strip() if row[8] else None # Семестр из 9 колонки
+            start_date = row[9] # 10 колонка 
+            end_date = row[10] # 11
             if sem_group and isinstance(start_date, datetime) and isinstance(end_date, datetime):
                 semester_dates[sem_group] = (start_date.date(), end_date.date())
 

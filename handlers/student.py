@@ -57,14 +57,14 @@ async def register_user_handler(message: Message):
     full_name = " ".join(parts[:3])
     group_name = " ".join(parts[3:])
 
-    # 🔒 Проверка в таблице allowed_users
+    # Проверка в таблице allowed_users
     if not validate_allowed_user(full_name, group_name):
         await message.answer("❌ Регистрация отклонена. Ваши данные не найдены в списке студентов.")
         return
 
     # Регистрация, если данные прошли проверку
     if register_user(message.from_user.id, full_name, group_name):
-        # ✅ Получаем только что зарегистрированного пользователя
+        # Получаем только что зарегистрированного пользователя
         session = get_db_session()
         user = session.query(User).filter_by(telegram_id=message.from_user.id).first()
 
@@ -109,6 +109,7 @@ async def receive_subject(message: Message, state: FSMContext):
     await message.answer("✏ Теперь введите <b>описание</b> вашей заявки или напишите «-», если без описания:")
     await state.set_state(ApplicationForm.description)
 
+# Получаем описание заявки и сохраняем в БД
 @router.message(ApplicationForm.description)
 async def receive_description(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -136,6 +137,7 @@ async def receive_description(message: Message, state: FSMContext):
         f"📝 <b>Описание:</b> {description or '—'}"
     )
 
+    # Создаём заявку в таблице Application
     new_app = Application(
         user_id=user.id,
         content=content
@@ -210,7 +212,7 @@ async def register_event(callback: CallbackQuery):
     session = get_db_session()
     user = session.query(User).filter_by(telegram_id=callback.from_user.id).first()
 
-    # Уже записан?
+    # уже записан?
     already = session.query(EventParticipant).filter_by(user_id=user.id, event_id=event_id).first()
     if already:
         await callback.answer("Вы уже записаны на это мероприятие.")
@@ -218,7 +220,7 @@ async def register_event(callback: CallbackQuery):
         return
 
     # Пытаемся зарегистрировать
-    success = register_for_event(user.id, event_id)
+    success = register_for_event(user.id, event_id) # INSERT в EventParticipant
     if success:
         await callback.answer("✅ Вы успешно записались!")
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -240,7 +242,7 @@ async def today_schedule(callback: CallbackQuery):
         if schedule:
             formatted = format_schedule(schedule)
             print("Тип schedule ПОСЛЕ форматирования:", type(formatted))
-            await callback.message.edit_text(f"📅 <b>Расписание на сегодня:</b>\n{formatted}")  # Функция get_today_schedule уже возвращает форматированный текст
+            await callback.message.edit_text(f"📅 <b>Расписание на сегодня:</b>\n{formatted}")  # возвращает форматированный текст
         else:
             await callback.message.edit_text("❌ На сегодня нет занятий.")
     await show_main_menu(callback.message)
@@ -298,7 +300,7 @@ async def my_requests(callback: CallbackQuery):
     if not applications:
         await callback.message.edit_text("❌ У вас пока нет заявок.")
     else:
-        # Показываем каждую заявку отдельным сообщением
+        # вывод зявок каждым сообщением
         for app in applications:
             await callback.message.answer(
                 text=(
@@ -332,7 +334,6 @@ def format_schedule(schedule, two_weeks=False):
             'SUNDAY': 7
         }
         
-        # Русские названия дней
         day_names = {
             'MONDAY': 'Понедельник',
             'TUESDAY': 'Вторник',
@@ -359,7 +360,7 @@ def format_schedule(schedule, two_weeks=False):
                         f"   🏫 {class_info['auditorium']} | 👨‍🏫 {class_info['teacher']}\n"
                     )
     else:
-        # Форматирование для одного дня (оставляем как было)
+        # Форматирование для одного дня 
         for day, classes in schedule.items():
             formatted_schedule += f"\n<b>📅 {day}:</b>\n"
             for class_info in classes:
